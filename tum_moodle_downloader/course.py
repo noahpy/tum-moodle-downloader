@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import urllib.parse
 
 from bs4 import BeautifulSoup
 
@@ -10,6 +12,7 @@ from .resource import Resource, ResourceType
 class Course:
     def __init__(self, course_name, course_url):
         self.name = course_name
+        self.course_url = course_url
 
         course_page = globals.global_session.get(course_url).content
         self.soup = BeautifulSoup(course_page, 'html.parser')
@@ -17,31 +20,85 @@ class Course:
         self.resources = self._extract_resources()
         self.latest_resources = [resource for resource in self.resources.values() if resource.is_recent]
 
+    def _get_section_soups(self):
+        """Detect tabbed courses and return soups for all section pages."""
+        course_id = urllib.parse.parse_qs(urllib.parse.urlparse(self.course_url).query).get('id', [None])[0]
+        if not course_id:
+            return [self.soup]
+
+        tab_links = self.soup.find_all('a', href=lambda h: h and f'id={course_id}' in h and 'section=' in h)
+        section_nums = set()
+        for link in tab_links:
+            href = link.get('href', '')
+            match = re.search(r'section=(\d+)', href)
+            if match:
+                section_nums.add(int(match.group(1)))
+
+        if not section_nums:
+            return [self.soup]
+
+        soups = []
+        for sec_num in sorted(section_nums):
+            page = globals.global_session.get(
+                f'https://www.moodle.tum.de/course/view.php?id={course_id}&section={sec_num}'
+            ).content
+            soups.append(BeautifulSoup(page, 'html.parser'))
+        return soups
+
     def _extract_resources(self):
         resources = {}
-        sections = []
-        latest_week_section = None
 
-        # Extract sections for courses structured by weeks
-        weeks = self.soup.find('ul', class_='weeks')
-        if weeks is not None:
-            sections += weeks.find_all('li', class_='section course-section main clearfix')
-            latest_week_section = weeks.find('li', class_='section course-section main clearfix current')
-            if latest_week_section is not None:
-                sections.append(latest_week_section)
+        for soup in self._get_section_soups():
+            sections = []
+            latest_week_section = None
 
-        # Extract sections for courses structured by topics
-        topics = self.soup.find('ul', class_='topics')
-        if topics is not None:
-            sections += topics.find_all('li', class_='section course-section main clearfix')
+            # Extract sections for courses structured by weeks
+            weeks = soup.find('ul', class_='weeks')
+            if weeks is not None:
+                sections += weeks.find_all('li', class_='section course-section main clearfix')
+                latest_week_section = weeks.find('li', class_='section course-section main clearfix current')
+                if latest_week_section is not None:
+                    sections.append(latest_week_section)
 
-        # Extract resources from the sections
-        for section in sections:
-            section_resources = section.find_all('li', class_='activity')
-            for activity_li in section_resources:
-                resource = Resource(activity_li, is_recent=(section == latest_week_section))
-                if resource.name is not None:
-                    resources[resource.name] = resource
+            # Extract sections for courses structured by topics
+            topics = soup.find('ul', class_='topics')
+            if topics is not None:
+                sections += topics.find_all('li', class_='section course-section main clearfix')
+
+            # Fallback: if no weeks/topics container, use sections directly from the page
+            if not sections:
+                sections = soup.find_all('li', class_='section course-section main clearfix')
+
+            for section in sections:
+                is_recent = (section == latest_week_section)
+
+                # Extract PDF links embedded directly in section content
+                for link in section.find_all('a', href=lambda h: h and '.pdf' in h):
+                    if link.find_parent('li', class_='activity'):
+                        continue
+                    href = link.get('href')
+                    decoded = urllib.parse.unquote(urllib.parse.urlparse(href).path)
+                    pdf_name = os.path.splitext(os.path.basename(decoded))[0]
+                    resources[pdf_name] = Resource.from_direct_url(
+                        pdf_name, href, ResourceType.RESOURCE_TYPE_FILE, is_recent=is_recent
+                    )
+
+                section_resources = section.find_all('li', class_='activity')
+                for activity_li in section_resources:
+                    # Extract PDF links from label elements
+                    if 'modtype_label' in activity_li.get('class', []):
+                        for link in activity_li.find_all('a', href=lambda h: h and '.pdf' in h):
+                            href = link.get('href')
+                            decoded = urllib.parse.unquote(urllib.parse.urlparse(href).path)
+                            pdf_name = os.path.splitext(os.path.basename(decoded))[0]
+                            resources[pdf_name] = Resource.from_direct_url(
+                                pdf_name, href, ResourceType.RESOURCE_TYPE_FILE, is_recent=is_recent
+                            )
+                        continue
+
+                    resource = Resource(activity_li, is_recent=(section == latest_week_section))
+                    if resource.name is not None:
+                        resources[resource.name] = resource
 
         return resources
 

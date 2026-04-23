@@ -48,9 +48,19 @@ class Resource:
         if self.resource_url is None:
             self.available = False
         else:
-            # TODO: validate url to check, if it is available
             self.available = True
         self.type = self.get_resource_type(self.resource_div)
+
+    @classmethod
+    def from_direct_url(cls, name, url, resource_type, is_recent=False):
+        instance = cls.__new__(cls)
+        instance.resource_div = None
+        instance.is_recent = is_recent
+        instance.name = name
+        instance.resource_url = url
+        instance.available = True
+        instance.type = resource_type
+        return instance
 
     @staticmethod
     def get_resource_name(resource_div):
@@ -100,10 +110,9 @@ class Resource:
         # (as in https://www.moodle.tum.de/pluginfile.php/1702929/mod_resource/content/1/%C3%9Cbung%202_L%C3%B6sung.pdf)
         decoded_file_url = urllib.parse.unquote(file_url)
 
-        # Extract file name from URL
-        filename = os.path.basename(decoded_file_url)
-        if '?forcedownload=1' in filename:
-            filename = filename.replace('?forcedownload=1', '')
+        # Extract file name from URL, stripping query parameters
+        parsed_file_url = urllib.parse.urlparse(decoded_file_url)
+        filename = os.path.basename(parsed_file_url.path)
 
         destination_path = os.path.join(destination_dir, filename)
 
