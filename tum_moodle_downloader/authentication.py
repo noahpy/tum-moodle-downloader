@@ -74,10 +74,31 @@ def start_session(username, password) -> requests.Session or None:
     )
 
     soup = BeautifulSoup(response.text, 'html.parser')
-    csrf_token = soup.find("input").attrs['value']
+    form = soup.find('form')
+
+    if not form.find('input', {'name': 'j_username'}):
+        # Submit the local storage check form to advance to the login page
+        ls_action = form.get('action')
+        ls_data = {}
+        for inp in form.find_all('input'):
+            name = inp.get('name')
+            if name:
+                ls_data[name] = inp.get('value', '')
+        response = session.post(
+            f'{IDP_BASE_URL}{ls_action}',
+            headers=additional_headers,
+            data=ls_data,
+            proxies=proxies,
+            verify=True,
+        )
+        soup = BeautifulSoup(response.text, 'html.parser')
+        form = soup.find('form')
+
+    login_action = form.get('action')
+    csrf_token = form.find('input', {'name': 'csrf_token'}).get('value')
 
     response = session.post(
-        f'{IDP_BASE_URL}{sso_url}',
+        f'{IDP_BASE_URL}{login_action}',
         headers=additional_headers,
         data={
             'csrf_token': csrf_token,
@@ -97,11 +118,12 @@ def start_session(username, password) -> requests.Session or None:
     action_url, sso_data = _find_sso_data(soup)
     try:
         response = session.post(
-            f'{action_url}',
+                f'{action_url}',
             headers=additional_headers,
             data=sso_data
         )
-    except requests.exceptions.MissingSchema:
+    except requests.exceptions.MissingSchema as e:
+        print(e)
         print('Error while authenticating. Check credentials.')
         return None
 
