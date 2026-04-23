@@ -37,10 +37,11 @@ class Course:
 
         # Extract resources from the sections
         for section in sections:
-            section_resources = section.find_all('div', class_='activity-instance d-flex flex-column')
-            for resource_div in section_resources:
-                resource = Resource(resource_div, is_recent=(section == latest_week_section))
-                resources[resource.name] = resource
+            section_resources = section.find_all('li', class_='activity')
+            for activity_li in section_resources:
+                resource = Resource(activity_li, is_recent=(section == latest_week_section))
+                if resource.name is not None:
+                    resources[resource.name] = resource
 
         return resources
 

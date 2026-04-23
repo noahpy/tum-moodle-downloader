@@ -54,7 +54,10 @@ class Resource:
 
     @staticmethod
     def get_resource_name(resource_div):
-        return resource_div.find('span', class_='instancename').contents[0].strip()
+        span = resource_div.find('span', class_='instancename')
+        if span:
+            return span.contents[0].strip()
+        return None
 
     @staticmethod
     def get_resource_url(resource_div):
@@ -66,16 +69,16 @@ class Resource:
 
     @staticmethod
     def get_resource_type(resource_div):
-        group = resource_div.parent.parent.parent.parent['class']
-        if 'modtype_resource' in group:
+        classes = resource_div.get('class', [])
+        if 'modtype_resource' in classes:
             return ResourceType.RESOURCE_TYPE_FILE
-        elif 'modtype_folder' in group:
+        elif 'modtype_folder' in classes:
             return ResourceType.RESOURCE_TYPE_FOLDER
-        elif 'modtype_assign' in group:
+        elif 'modtype_assign' in classes:
             return ResourceType.RESOURCE_TYPE_ASSIGNMENT
-        elif 'modtype_url' in group:
-            # TODO what to do with other types?
-            if 'pdf' in resource_div.find('img')['src']:
+        elif 'modtype_url' in classes:
+            img = resource_div.find('img')
+            if img and 'pdf' in img.get('src', ''):
                 return ResourceType.RESOURCE_TYPE_URL
         return ResourceType.RESOURCE_TYPE_OTHER
 
