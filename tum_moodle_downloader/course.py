@@ -70,19 +70,17 @@ class Course:
                 sections = soup.find_all('li', class_='section course-section main clearfix')
 
             for section in sections:
+                is_recent = (section == latest_week_section)
+
+                # Extract PDF links from the section description (e.g. lecture notes linked in the summary text)
+                for summary in section.find_all('div', class_='summarytext'):
+                    self._add_pdf_links(summary, resources, is_recent)
+
                 section_resources = section.find_all('li', class_='activity')
                 for activity_li in section_resources:
                     # Extract PDF links from label elements
                     if 'modtype_label' in activity_li.get('class', []):
-                        for link in activity_li.find_all('a', href=lambda h: h and '.pdf' in h):
-                            href = link.get('href')
-                            decoded = urllib.parse.unquote(urllib.parse.urlparse(href).path)
-                            pdf_name = os.path.splitext(os.path.basename(decoded))[0]
-                            label_resource = Resource.from_direct_url(
-                                pdf_name, href, ResourceType.RESOURCE_TYPE_FILE,
-                                is_recent=(section == latest_week_section)
-                            )
-                            resources[label_resource.name] = label_resource
+                        self._add_pdf_links(activity_li, resources, is_recent)
                         continue
 
                     resource = Resource(activity_li, is_recent=(section == latest_week_section))
@@ -90,6 +88,18 @@ class Course:
                         resources[resource.name] = resource
 
         return resources
+
+    @staticmethod
+    def _add_pdf_links(element, resources, is_recent):
+        """Adds every PDF linked inside 'element' as a file resource named after the PDF."""
+        for link in element.find_all('a', href=lambda h: h and '.pdf' in h):
+            href = link.get('href')
+            decoded = urllib.parse.unquote(urllib.parse.urlparse(href).path)
+            pdf_name = os.path.splitext(os.path.basename(decoded))[0]
+            pdf_resource = Resource.from_direct_url(
+                pdf_name, href, ResourceType.RESOURCE_TYPE_FILE, is_recent=is_recent
+            )
+            resources[pdf_resource.name] = pdf_resource
 
     def download_resource(self, resource_name, destination_dir, parallel, update_handling):
         """
