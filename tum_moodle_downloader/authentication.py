@@ -35,7 +35,26 @@ def _find_sso_data(soup) -> (str, dict) or None:
     return action_url, sso_headers
 
 
-def start_session(username, password) -> requests.Session or None:
+def _submit_otp(session, form, otp_provider):
+    """Submit the privacyIDEA TOTP form shown by the IdP after the password step."""
+    data = {}
+    for inp in form.find_all('input'):
+        name = inp.get('name')
+        if name:
+            data[name] = inp.get('value', '')
+    data['otp'] = otp_provider()
+    data['_eventId_proceed'] = ''
+    return session.post(
+        f'{IDP_BASE_URL}{form.get("action")}',
+        headers=additional_headers,
+        data=data,
+        proxies=proxies,
+        verify=True,
+    )
+
+
+def start_session(username, password, otp_provider=None) -> requests.Session or None:
+    """otp_provider: optional callable returning a TOTP code; only used if the IdP asks for 2FA."""
     print('Starting Moodle session')
     session = requests.Session()
     session.headers.update(base_headers)
@@ -115,7 +134,27 @@ def start_session(username, password) -> requests.Session or None:
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
-    action_url, sso_data = _find_sso_data(soup)
+    form = soup.find('form')
+    if form and form.find('input', {'name': 'otp'}):
+        print('Two-factor authentication required, submitting TOTP code')
+        if otp_provider is None:
+            from .otp import get_otp
+            otp_provider = get_otp
+        response = _submit_otp(session, form, otp_provider)
+        if response.status_code != 200:
+            print('Error while starting session: OTP submission failed')
+            return None
+        soup = BeautifulSoup(response.text, 'html.parser')
+        form = soup.find('form')
+        if form and form.find('input', {'name': 'otp'}):
+            print('Error while starting session: OTP code was rejected')
+            return None
+
+    sso_data = _find_sso_data(soup) if form else None
+    if not sso_data:
+        print('Error while authenticating. Check credentials.')
+        return None
+    action_url, sso_data = sso_data
     try:
         response = session.post(
                 f'{action_url}',
